@@ -6290,7 +6290,7 @@ private:
             "Drop the current WiFi connection and reboot into the WiFi "
             "configuration portal (captive AP). The device goes offline "
             "until re-provisioned.",
-            PropertyList({}),
+            PropertyList(),
             [this](const PropertyList& properties) -> ReturnValue {
                 cJSON* root = cJSON_CreateObject();
                 cJSON_AddBoolToObject(root, "ok", true);
