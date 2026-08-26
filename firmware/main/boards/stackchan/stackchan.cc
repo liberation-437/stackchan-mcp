@@ -6284,6 +6284,23 @@ private:
                 return root;
             });
 
+        // [custom] Re-enter the WiFi configuration portal (for the web console).
+        mcp_server.AddTool(
+            "self.wifi.enter_config",
+            "Drop the current WiFi connection and reboot into the WiFi "
+            "configuration portal (captive AP). The device goes offline "
+            "until re-provisioned.",
+            PropertyList({}),
+            [this](const PropertyList& properties) -> ReturnValue {
+                cJSON* root = cJSON_CreateObject();
+                cJSON_AddBoolToObject(root, "ok", true);
+                // Reply first, then schedule the mode switch so the MCP
+                // response can still go out over the current link.
+                auto& app = Application::GetInstance();
+                app.Schedule([this]() { EnterWifiConfigMode(); });
+                return root;
+            });
+
         // Phase 2: lip-sync. Swap the avatar to one of the mouth-only frames.
         // The shape is held until the next set_avatar / set_mouth / blink, so
         // callers should drive it from their TTS / audio level loop.
