@@ -4711,8 +4711,10 @@ private:
         if (screen == nullptr) return false;
         subtitle_label_ = lv_label_create(screen);
         if (subtitle_label_ == nullptr) return false;
-        lv_obj_set_width(subtitle_label_, 300);
-        lv_label_set_long_mode(subtitle_label_, LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(subtitle_label_, 320);
+        // [custom v2] single-line marquee like the stock chat UI: text longer
+        // than the label width scrolls circularly instead of wrapping.
+        lv_label_set_long_mode(subtitle_label_, LV_LABEL_LONG_SCROLL_CIRCULAR);
         lv_obj_set_style_text_color(subtitle_label_, lv_color_white(), 0);
         lv_obj_set_style_bg_color(subtitle_label_, lv_color_black(), 0);
         lv_obj_set_style_bg_opa(subtitle_label_, LV_OPA_70, 0);
