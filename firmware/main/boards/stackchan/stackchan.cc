@@ -643,6 +643,9 @@ private:
     // board's constructor completes. avatar_init_timer_ retries every 500 ms
     // until the screen is ready, then stops itself.
     lv_obj_t* avatar_img_ = nullptr;
+    // [custom] Subtitle overlay: bottom-of-screen text via self.screen.show_text
+    lv_obj_t* subtitle_label_ = nullptr;
+    esp_timer_handle_t subtitle_timer_ = nullptr;
     esp_timer_handle_t avatar_init_timer_ = nullptr;
     std::string current_avatar_face_ = "idle";
 
@@ -4437,6 +4440,19 @@ private:
         if (strcmp(face, "sad") == 0)         return 3;
         if (strcmp(face, "surprised") == 0)   return 4;
         if (strcmp(face, "embarrassed") == 0) return 5;
+        // [custom] Extended faces 6..15 — require a layered AvatarSet with 16
+        // faces loaded (avatar_set.bin pushed via load_avatar_set); the static
+        // fallback tables only carry the 6 stock faces.
+        if (strcmp(face, "kiss") == 0)        return 6;
+        if (strcmp(face, "cry") == 0)         return 7;
+        if (strcmp(face, "sleep") == 0)       return 8;
+        if (strcmp(face, "hug") == 0)         return 9;
+        if (strcmp(face, "smug") == 0)        return 10;
+        if (strcmp(face, "heart_eyes") == 0)  return 11;
+        if (strcmp(face, "mischief") == 0)    return 12;
+        if (strcmp(face, "angry") == 0)       return 13;
+        if (strcmp(face, "worry") == 0)       return 14;
+        if (strcmp(face, "puzzled") == 0)     return 15;
         return -1;
     }
 
@@ -4684,6 +4700,65 @@ private:
         lv_obj_move_foreground(avatar_img_);
         ESP_LOGI(TAG, "Avatar lv_image created on active screen");
         return true;
+    }
+
+    // [custom] ---- Subtitle overlay (self.screen.show_text) ----------------
+    // Creates (once) a full-width label pinned to the bottom of the active
+    // screen, layered above the avatar image. Auto-hides after N seconds.
+    bool EnsureSubtitleLabelLocked() {
+        if (subtitle_label_ != nullptr) return true;
+        lv_obj_t* screen = lv_screen_active();
+        if (screen == nullptr) return false;
+        subtitle_label_ = lv_label_create(screen);
+        if (subtitle_label_ == nullptr) return false;
+        lv_obj_set_width(subtitle_label_, 300);
+        lv_label_set_long_mode(subtitle_label_, LV_LABEL_LONG_WRAP);
+        lv_obj_set_style_text_color(subtitle_label_, lv_color_white(), 0);
+        lv_obj_set_style_bg_color(subtitle_label_, lv_color_black(), 0);
+        lv_obj_set_style_bg_opa(subtitle_label_, LV_OPA_70, 0);
+        lv_obj_set_style_text_align(subtitle_label_, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_pad_all(subtitle_label_, 6, 0);
+        lv_obj_align(subtitle_label_, LV_ALIGN_BOTTOM_MID, 0, -6);
+        lv_obj_add_flag(subtitle_label_, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_move_foreground(subtitle_label_);
+        ESP_LOGI(TAG, "Subtitle label created");
+        return true;
+    }
+
+    void HideSubtitle() {
+        if (display_ == nullptr || subtitle_label_ == nullptr) return;
+        DisplayLockGuard lock(display_);
+        lv_obj_add_flag(subtitle_label_, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    void ShowSubtitle(const std::string& text, int seconds) {
+        if (display_ == nullptr) return;
+        {
+            DisplayLockGuard lock(display_);
+            if (!EnsureSubtitleLabelLocked()) return;
+            lv_label_set_text(subtitle_label_, text.c_str());
+            lv_obj_clear_flag(subtitle_label_, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_move_foreground(subtitle_label_);
+        }
+        if (subtitle_timer_ == nullptr) {
+            esp_timer_create_args_t args = {
+                .callback = [](void* arg) {
+                    StackChanBoard* board = (StackChanBoard*)arg;
+                    board->HideSubtitle();
+                },
+                .arg = this,
+                .dispatch_method = ESP_TIMER_TASK,
+                .name = "subtitle_hide",
+                .skip_unhandled_events = false,
+            };
+            esp_timer_create(&args, &subtitle_timer_);
+        } else {
+            esp_timer_stop(subtitle_timer_);
+        }
+        if (seconds > 0 && subtitle_timer_ != nullptr) {
+            esp_timer_start_once(subtitle_timer_, (uint64_t)seconds * 1000000ULL);
+        }
+        ESP_LOGI(TAG, "show_text: '%s' (%d s)", text.c_str(), seconds);
     }
 
     // Apply the requested face to avatar_img_. Returns false if the face is
@@ -5701,7 +5776,7 @@ private:
             // PR #81's defense-in-depth requirement that every servo-write
             // boundary be guarded inside the firmware regardless of
             // caller behavior.
-            PropertyList({Property("yaw", kPropertyTypeInteger, 0, -90, 90),
+            PropertyList({Property("yaw", kPropertyTypeInteger, 0, -128, 128),
                           Property("pitch", kPropertyTypeInteger, 0,
                                    std::numeric_limits<int>::min(),
                                    std::numeric_limits<int>::max()),
@@ -6147,7 +6222,9 @@ private:
         mcp_server.AddTool(
             "self.display.set_avatar",
             "Set the avatar face displayed on the LCD. face must be one of: "
-            "idle, happy, thinking, sad, surprised, embarrassed, off. "
+            "idle, happy, thinking, sad, surprised, embarrassed, kiss, cry, "
+            "sleep, hug, smug, heart_eyes, mischief, angry, worry, puzzled, "
+            "off (extended faces need a 16-face avatar set loaded). "
             "'off' hides the avatar and disables blink so the underlying "
             "xiaozhi-esp32 screens (WiFi config UI, OTA, settings) are "
             "visible; calling set_avatar with another face brings the avatar "
@@ -6173,7 +6250,8 @@ private:
                     cJSON_AddBoolToObject(root, "ok", false);
                     cJSON_AddStringToObject(root, "error",
                         "Unknown face. Allowed: idle, happy, thinking, sad, "
-                        "surprised, embarrassed, off.");
+                        "surprised, embarrassed, kiss, cry, sleep, hug, smug, "
+                        "heart_eyes, mischief, angry, worry, puzzled, off.");
                     ESP_LOGW(TAG, "set_avatar rejected: unknown face '%s'", face.c_str());
                     return root;
                 }
@@ -6183,6 +6261,24 @@ private:
                         "Display not ready yet; retry after a moment.");
                 }
                 ESP_LOGI(TAG, "set_avatar: face=%s applied=%d", face.c_str(), applied);
+                return root;
+            });
+
+        // [custom] Bottom-of-screen subtitle text.
+        mcp_server.AddTool(
+            "self.screen.show_text",
+            "Show a text line pinned to the bottom of the LCD (subtitle "
+            "overlay, above the avatar). Auto-hides after `seconds` "
+            "(default 8; 0 = keep until replaced or 'off').",
+            PropertyList({Property("text", kPropertyTypeString),
+                          Property("seconds", kPropertyTypeInteger, 8, 0, 3600)}),
+            [this](const PropertyList& properties) -> ReturnValue {
+                std::string text = properties["text"].value<std::string>();
+                int seconds = properties["seconds"].value<int>();
+                ShowSubtitle(text, seconds);
+                cJSON* root = cJSON_CreateObject();
+                cJSON_AddBoolToObject(root, "ok", true);
+                cJSON_AddStringToObject(root, "text", text.c_str());
                 return root;
             });
 

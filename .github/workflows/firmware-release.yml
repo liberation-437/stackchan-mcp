@@ -28,7 +28,9 @@ jobs:
     runs-on: ubuntu-latest
 
     permissions:
-      contents: read
+      # [custom] write on dispatch runs so the dist-branch publish step below
+      # can push build artifacts; tag-push release flow is unchanged.
+      contents: write
 
     steps:
       - name: Checkout repository
@@ -145,6 +147,27 @@ jobs:
             firmware/build/merged-binary.bin
             firmware/build/xiaozhi.bin
             firmware/releases/v*_stackchan.zip
+
+      # [custom] Publish binaries to the `dist` branch on manual runs so they
+      # can be fetched with a plain public `git fetch` (artifact downloads
+      # otherwise require GitHub authentication).
+      - name: Publish binaries to dist branch
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/dist && cd /tmp/dist
+          cp "$GITHUB_WORKSPACE/firmware/build/xiaozhi.bin" .
+          cp "$GITHUB_WORKSPACE/firmware/build/merged-binary.bin" .
+          cp "$GITHUB_WORKSPACE"/firmware/releases/v*_stackchan.zip . || true
+          git init -q
+          git config user.name ci-bot
+          git config user.email ci-bot@users.noreply.github.com
+          git checkout -q -b dist
+          git add .
+          git commit -qm "custom firmware build ${GITHUB_SHA}"
+          git push -qf "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:dist
 
   release:
     name: Publish GitHub Release
