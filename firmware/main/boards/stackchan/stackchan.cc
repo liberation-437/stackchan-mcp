@@ -4724,12 +4724,12 @@ private:
         // some CJK glyphs missing -> partial subtitle like "中测试").
         LV_FONT_DECLARE(BUILTIN_TEXT_FONT);
         lv_obj_set_style_text_font(subtitle_label_, &BUILTIN_TEXT_FONT, 0);
-        lv_obj_set_style_text_color(subtitle_label_, lv_color_white(), 0);
-        lv_obj_set_style_bg_color(subtitle_label_, lv_color_black(), 0);
-        lv_obj_set_style_bg_opa(subtitle_label_, LV_OPA_70, 0);
+        lv_obj_set_style_text_color(subtitle_label_, lv_color_hex(0x333333), 0);
+        lv_obj_set_style_bg_color(subtitle_label_, lv_color_white(), 0);
+        lv_obj_set_style_bg_opa(subtitle_label_, LV_OPA_COVER, 0);
         lv_obj_set_style_text_align(subtitle_label_, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_set_style_pad_all(subtitle_label_, 6, 0);
-        lv_obj_align(subtitle_label_, LV_ALIGN_BOTTOM_MID, 0, -6);
+        lv_obj_set_style_pad_all(subtitle_label_, 2, 0);
+        lv_obj_align(subtitle_label_, LV_ALIGN_BOTTOM_MID, 0, -2);
         lv_obj_add_flag(subtitle_label_, LV_OBJ_FLAG_HIDDEN);
         lv_obj_move_foreground(subtitle_label_);
         ESP_LOGI(TAG, "Subtitle label created");
