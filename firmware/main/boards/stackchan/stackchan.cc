@@ -4691,8 +4691,10 @@ private:
         }
         // Center on the 320x240 LCD and upscale 160x120 -> ~320x240 (2x).
         // lv_image_set_scale uses 256 = 1.0x; 512 = 2.0x.
-        lv_image_set_scale(avatar_img_, 512);
-        lv_obj_align(avatar_img_, LV_ALIGN_CENTER, 0, 0);
+        // [custom v3] 448 = 1.75x (280x210) shifted down 30px so the stock
+        // top status bar (clock / battery) stays visible above the avatar.
+        lv_image_set_scale(avatar_img_, 448);
+        lv_obj_align(avatar_img_, LV_ALIGN_TOP_MID, 0, 30);
         lv_obj_clear_flag(avatar_img_, LV_OBJ_FLAG_SCROLLABLE);
         // Keep the avatar visually on top of the chat UI's emoji_label_,
         // chat bubbles, etc. The status bar (clock/battery) lives on a
@@ -4715,6 +4717,10 @@ private:
         // [custom v2] single-line marquee like the stock chat UI: text longer
         // than the label width scrolls circularly instead of wrapping.
         lv_label_set_long_mode(subtitle_label_, LV_LABEL_LONG_SCROLL_CIRCULAR);
+        // [custom v3] explicit full-Chinese text font (theme inheritance left
+        // some CJK glyphs missing -> partial subtitle like "中测试").
+        LV_FONT_DECLARE(BUILTIN_TEXT_FONT);
+        lv_obj_set_style_text_font(subtitle_label_, &BUILTIN_TEXT_FONT, 0);
         lv_obj_set_style_text_color(subtitle_label_, lv_color_white(), 0);
         lv_obj_set_style_bg_color(subtitle_label_, lv_color_black(), 0);
         lv_obj_set_style_bg_opa(subtitle_label_, LV_OPA_70, 0);
