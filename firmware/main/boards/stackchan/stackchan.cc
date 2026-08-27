@@ -4691,13 +4691,12 @@ private:
         }
         // Center on the 320x240 LCD and upscale 160x120 -> ~320x240 (2x).
         // lv_image_set_scale uses 256 = 1.0x; 512 = 2.0x.
-        // [custom v3b] lv_image scale does NOT resize the widget: the 1.75x
-        // image renders 60px wider and 45px taller than the 160x120 widget,
-        // overflowing around the widget center. Widget top at y=75 puts the
-        // scaled image at y=30..240 — clear of the top status bar, flush to
-        // the bottom.
-        lv_image_set_scale(avatar_img_, 448);
-        lv_obj_align(avatar_img_, LV_ALIGN_TOP_MID, 0, 75);
+        // [custom v4] 320 = 1.25x (200x150) positioned to leave bottom 70px
+        // free for the native chat message area (chat_message tool).
+        // Widget TOP_MID y=35: widget center y=95, image y=20-170.
+        // Status bar (y=0-20) and chat area (y=170-240) both visible.
+        lv_image_set_scale(avatar_img_, 320);
+        lv_obj_align(avatar_img_, LV_ALIGN_TOP_MID, 0, 35);
         lv_obj_clear_flag(avatar_img_, LV_OBJ_FLAG_SCROLLABLE);
         // Keep the avatar visually on top of the chat UI's emoji_label_,
         // chat bubbles, etc. The status bar (clock/battery) lives on a
@@ -6289,6 +6288,30 @@ private:
                 ShowSubtitle(text, seconds);
                 cJSON* root = cJSON_CreateObject();
                 cJSON_AddBoolToObject(root, "ok", true);
+                cJSON_AddStringToObject(root, "text", text.c_str());
+                return root;
+            });
+
+        // [custom v4] Native chat message via xiaozhi's SetChatMessage —
+        // uses the same font and rendering as the stock chat UI, so all
+        // Chinese glyphs render correctly.
+        mcp_server.AddTool(
+            "self.display.chat_message",
+            "Display text in the native xiaozhi chat area (uses the stock "
+            "chat UI font and rendering). Role: 'assistant' or 'user'.",
+            PropertyList({Property("text", kPropertyTypeString),
+                          Property("role", kPropertyTypeString)}),
+            [this](const PropertyList& properties) -> ReturnValue {
+                std::string text = properties["text"].value<std::string>();
+                std::string role = properties["role"].value<std::string>();
+                if (role.empty()) role = "assistant";
+                auto& app = Application::GetInstance();
+                app.Schedule([this, text, role]() {
+                    GetDisplay()->SetChatMessage(role.c_str(), text.c_str());
+                });
+                cJSON* root = cJSON_CreateObject();
+                cJSON_AddBoolToObject(root, "ok", true);
+                cJSON_AddStringToObject(root, "role", role.c_str());
                 cJSON_AddStringToObject(root, "text", text.c_str());
                 return root;
             });
