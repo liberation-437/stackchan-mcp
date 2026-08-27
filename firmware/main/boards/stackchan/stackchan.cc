@@ -4691,10 +4691,13 @@ private:
         }
         // Center on the 320x240 LCD and upscale 160x120 -> ~320x240 (2x).
         // lv_image_set_scale uses 256 = 1.0x; 512 = 2.0x.
-        // [custom v3] 448 = 1.75x (280x210) shifted down 30px so the stock
-        // top status bar (clock / battery) stays visible above the avatar.
+        // [custom v3b] lv_image scale does NOT resize the widget: the 1.75x
+        // image renders 60px wider and 45px taller than the 160x120 widget,
+        // overflowing around the widget center. Widget top at y=75 puts the
+        // scaled image at y=30..240 — clear of the top status bar, flush to
+        // the bottom.
         lv_image_set_scale(avatar_img_, 448);
-        lv_obj_align(avatar_img_, LV_ALIGN_TOP_MID, 0, 30);
+        lv_obj_align(avatar_img_, LV_ALIGN_TOP_MID, 0, 75);
         lv_obj_clear_flag(avatar_img_, LV_OBJ_FLAG_SCROLLABLE);
         // Keep the avatar visually on top of the chat UI's emoji_label_,
         // chat bubbles, etc. The status bar (clock/battery) lives on a
