@@ -9,6 +9,7 @@
 #include "mcp_server.h"
 #include "settings.h"
 #include "led_strip.h"
+#include "esp_heap_caps.h"
 // Issue #79: servo driver is selectable at build time via Kconfig.
 //   - CONFIG_STACKCHAN_SERVO_SCSCL  (default): GPL-3.0 SCServo_lib
 //   - CONFIG_STACKCHAN_SERVO_FEETECH: MIT clean-room driver vendored at
@@ -4735,6 +4736,105 @@ private:
         return true;
     }
 
+    // [custom v5] Server-rendered text image (160x28 RGB565) at screen bottom.
+    // Bypasses device font entirely — server renders with PIL + full CJK font.
+    static constexpr int kTextImgW = 160;
+    static constexpr int kTextImgH = 28;
+    static constexpr size_t kTextImgBytes = kTextImgW * kTextImgH * 2;
+    lv_obj_t* text_image_obj_ = nullptr;
+    esp_timer_handle_t text_image_timer_ = nullptr;
+    uint8_t* text_image_data_ = nullptr;  // heap-allocated RGB565 buffer
+
+    static int B64Val(char c) {
+        if (c >= 'A' && c <= 'Z') return c - 'A';
+        if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+        if (c >= '0' && c <= '9') return c - '0' + 52;
+        if (c == '+') return 62;
+        if (c == '/') return 63;
+        return -1;
+    }
+
+    static size_t B64Decode(const std::string& in, uint8_t* out, size_t out_max) {
+        size_t oi = 0;
+        int val = 0, valb = -8;
+        for (char c : in) {
+            int d = B64Val(c);
+            if (d < 0) continue;
+            val = (val << 6) + d;
+            valb += 6;
+            if (valb >= 0) {
+                if (oi >= out_max) return 0;
+                out[oi++] = (val >> valb) & 0xFF;
+                valb -= 8;
+            }
+        }
+        return oi;
+    }
+
+    void HideTextImage() {
+        if (display_ == nullptr || text_image_obj_ == nullptr) return;
+        DisplayLockGuard lock(display_);
+        lv_obj_add_flag(text_image_obj_, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    bool ShowTextImage(const std::string& b64, int seconds) {
+        if (display_ == nullptr) return false;
+        // Decode base64 → RGB565 pixels
+        if (text_image_data_ == nullptr) {
+            text_image_data_ = (uint8_t*)heap_caps_malloc(kTextImgBytes, MALLOC_CAP_DEFAULT);
+            if (text_image_data_ == nullptr) return false;
+        }
+        size_t decoded = B64Decode(b64, text_image_data_, kTextImgBytes);
+        if (decoded < kTextImgBytes) {
+            ESP_LOGW(TAG, "show_text_image: decoded %u bytes, expected %u", decoded, kTextImgBytes);
+            return false;
+        }
+        {
+            DisplayLockGuard lock(display_);
+            if (text_image_obj_ == nullptr) {
+                lv_obj_t* screen = lv_screen_active();
+                if (screen == nullptr) return false;
+                text_image_obj_ = lv_image_create(screen);
+                if (text_image_obj_ == nullptr) return false;
+                lv_obj_set_size(text_image_obj_, kTextImgW, kTextImgH);
+                lv_obj_align(text_image_obj_, LV_ALIGN_BOTTOM_MID, 0, -2);
+                lv_obj_move_foreground(text_image_obj_);
+                ESP_LOGI(TAG, "text_image widget created (160x28)");
+            }
+            // Point the image descriptor at our heap buffer
+            static lv_image_dsc_t img_dsc = {
+                .header = {.cf = LV_COLOR_FORMAT_RGB565,
+                           .w = kTextImgW, .h = kTextImgH},
+                .data_size = kTextImgBytes,
+                .data = nullptr,
+            };
+            img_dsc.data = text_image_data_;
+            lv_image_set_src(text_image_obj_, &img_dsc);
+            lv_obj_clear_flag(text_image_obj_, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_move_foreground(text_image_obj_);
+        }
+        // Auto-hide timer
+        if (text_image_timer_ == nullptr) {
+            esp_timer_create_args_t args = {
+                .callback = [](void* arg) {
+                    StackChanBoard* board = (StackChanBoard*)arg;
+                    board->HideTextImage();
+                },
+                .arg = this,
+                .dispatch_method = ESP_TIMER_TASK,
+                .name = "text_img_hide",
+            };
+            esp_timer_create(&args, &text_image_timer_);
+        } else {
+            esp_timer_stop(text_image_timer_);
+        }
+        if (seconds > 0 && text_image_timer_ != nullptr) {
+            esp_timer_start_once(text_image_timer_, (uint64_t)seconds * 1000000ULL);
+        }
+        ESP_LOGI(TAG, "show_text_image: %u bytes, %d s", decoded, seconds);
+        return true;
+    }
+
     void HideSubtitle() {
         if (display_ == nullptr || subtitle_label_ == nullptr) return;
         DisplayLockGuard lock(display_);
@@ -6292,27 +6392,22 @@ private:
                 return root;
             });
 
-        // [custom v4] Native chat message via xiaozhi's SetChatMessage —
-        // uses the same font and rendering as the stock chat UI, so all
-        // Chinese glyphs render correctly.
+        // [custom v5] Server-rendered text image strip (full CJK support).
+        // Server renders text with PIL → RGB565 → base64 → this tool.
+        // Displays as a 160x28 image at the bottom of the screen.
         mcp_server.AddTool(
-            "self.display.chat_message",
-            "Display text in the native xiaozhi chat area (uses the stock "
-            "chat UI font and rendering). Role: 'assistant' or 'user'.",
-            PropertyList({Property("text", kPropertyTypeString),
-                          Property("role", kPropertyTypeString)}),
+            "self.display.show_text_image",
+            "Display a server-rendered text image (160x28 RGB565, base64) "
+            "at the bottom of the LCD. Guarantees full CJK rendering since "
+            "the text is rendered server-side with a complete font. "
+            "seconds=0 means keep until next call.",
+            PropertyList({Property("data", kPropertyTypeString),
+                          Property("seconds", kPropertyTypeInteger, 30, 0, 3600)}),
             [this](const PropertyList& properties) -> ReturnValue {
-                std::string text = properties["text"].value<std::string>();
-                std::string role = properties["role"].value<std::string>();
-                if (role.empty()) role = "assistant";
-                auto& app = Application::GetInstance();
-                app.Schedule([this, text, role]() {
-                    GetDisplay()->SetChatMessage(role.c_str(), text.c_str());
-                });
+                std::string b64 = properties["data"].value<std::string>();
+                int seconds = properties["seconds"].value<int>();
                 cJSON* root = cJSON_CreateObject();
-                cJSON_AddBoolToObject(root, "ok", true);
-                cJSON_AddStringToObject(root, "role", role.c_str());
-                cJSON_AddStringToObject(root, "text", text.c_str());
+                cJSON_AddBoolToObject(root, "ok", ShowTextImage(b64, seconds));
                 return root;
             });
 
