@@ -784,7 +784,10 @@ private:
                                                   // gaps that cut a real stroke
                                                   // short of 600 ms.
     static constexpr int REACTION_HOLD_MS = 3000;
-    static constexpr int COOLDOWN_MS      = 800;  // post-reaction noise gate
+    // [custom v2] was 800: rapid tapping (~2/s, 500 ms gaps) had most events
+    // swallowed by the cooldown. 350 ms keeps anti-noise while letting
+    // consecutive taps through.
+    static constexpr int COOLDOWN_MS      = 350;
     // With 2-sample debounce this gives ~200 ms confirm latency, fast enough
     // to catch a quick "pon" (~200 ms press) while still rejecting single-
     // sample jitter. Was 200 ms polling -> 400 ms confirm, which silently
@@ -4315,12 +4318,19 @@ private:
     }
 
     // [custom] Sound-source orientation. imbalance: -1 (left) .. +1 (right)
-    // from the stereo mic pair, delivered via AudioService's direction-hint
-    // callback (hopped to the main task). Idle-only, throttled to 4 s, keeps
-    // the current pitch. If the head turns AWAY from the sound on real
+    // from the stereo mic pair; level: louder channel RMS. Hopped to the
+    // main task. Every sound-level window is forwarded to the gateway log
+    // (diagnostics); the head turns only when idle, throttled to 4 s, and
+    // |imbalance| >= 0.28. If the head turns AWAY from the sound on real
     // hardware, flip the yaw sign below.
     int64_t last_dir_turn_us_ = 0;
-    void OnDirectionHint(float imbalance) {
+    void OnDirectionHint(float imbalance, float level) {
+        // Diagnostic: report every sound-level window so the real mic
+        // energy/imbalance is observable remotely via the gateway log.
+        char diag[64];
+        snprintf(diag, sizeof(diag), "imb=%.2f rms=%.0f",
+                 (double)imbalance, (double)level);
+        Application::GetInstance().SendStackChanEvent("sound", diag, 0);
         if (Application::GetInstance().GetDeviceState() != kDeviceStateIdle) {
             return;
         }
@@ -4328,13 +4338,14 @@ private:
         if (now_us - last_dir_turn_us_ < 4000 * 1000LL) {
             return;
         }
-        if (imbalance > -0.35f && imbalance < 0.35f) {
+        if (imbalance > -0.28f && imbalance < 0.28f) {
             return;
         }
         last_dir_turn_us_ = now_us;
         int yaw = (imbalance < 0.0f) ? -38 : 38;
         int pitch = (int)pitch_motion_.current_deg;
-        ESP_LOGI(TAG, "direction hint %.2f -> turn head yaw=%d", imbalance, yaw);
+        ESP_LOGI(TAG, "direction hint %.2f (rms %.0f) -> turn head yaw=%d",
+                 imbalance, level, yaw);
         WriteHeadAngles(yaw, pitch, 60);
     }
 
@@ -4383,7 +4394,10 @@ private:
             touch_pending_count_ = 1;
             touch_pressed_pending_ = any_pressed;
         }
-        const int needed = touch_pressed_pending_ ? 1 : 4;
+        const int needed = touch_pressed_pending_ ? 1 : 3;
+        // [custom v2] release confirm 4->3 samples (300 ms): the 400 ms
+        // stickiness glued rapid taps (<400 ms gaps) into one long press,
+        // misclassifying tap bursts as STROKE.
         if (touch_pending_count_ < needed) {
             return;  // not yet debounced
         }
@@ -7662,9 +7676,11 @@ public:
         // imbalance callback on the audio input task; hop to the main task
         // for the servo write.
         Application::GetInstance().GetAudioService().SetDirectionHintCallback(
-            [this](float imbalance) {
+            [this](float imbalance, float level) {
                 Application::GetInstance().Schedule(
-                    [this, imbalance]() { OnDirectionHint(imbalance); });
+                    [this, imbalance, level]() {
+                        OnDirectionHint(imbalance, level);
+                    });
             });
         RegisterMcpTools();
     }

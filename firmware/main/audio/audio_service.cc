@@ -247,13 +247,13 @@ bool AudioService::ReadAudioData(std::vector<int16_t>& data, int sample_rate, in
                 double l = std::sqrt(l_acc / frames);
                 double r = std::sqrt(r_acc / frames);
                 double peak = std::max(l, r);
-                constexpr double kSoundRms = 700.0;    // speech at the mic
-                constexpr double kImbalanceMin = 0.35; // clearly one-sided
+                // [custom v2] thresholds relaxed (field test: zero turns);
+                // every above-sound-level analysis is reported with its
+                // level so the gateway log reveals real mic energy.
+                constexpr double kSoundRms = 500.0;
                 if (peak > kSoundRms) {
                     float imbalance = (float)((r - l) / peak); // -1 L .. +1 R
-                    if (std::fabs(imbalance) >= kImbalanceMin) {
-                        direction_hint_cb_(imbalance);
-                    }
+                    direction_hint_cb_(imbalance, (float)peak);
                 }
             }
         }

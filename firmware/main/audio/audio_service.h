@@ -140,11 +140,12 @@ public:
     void SetCallbacks(AudioServiceCallbacks& callbacks);
 
     // [custom] Sound-source direction hint: the board registers a callback
-    // that receives the L/R energy imbalance (-1 left .. +1 right) whenever
-    // a loud, clearly one-sided sound is present in the stereo capture.
-    // Kept SEPARATE from AudioServiceCallbacks so Application's own
-    // SetCallbacks() (which overwrites the whole struct) cannot clobber it.
-    void SetDirectionHintCallback(std::function<void(float)> cb) {
+    // that receives (imbalance, level): L/R energy imbalance (-1 left ..
+    // +1 right) and the louder channel's RMS, fired every 500 ms analysis
+    // window that sees sound above kSoundRms. Kept SEPARATE from
+    // AudioServiceCallbacks so Application's own SetCallbacks() (which
+    // overwrites the whole struct) cannot clobber it.
+    void SetDirectionHintCallback(std::function<void(float, float)> cb) {
         direction_hint_cb_ = std::move(cb);
     }
 
@@ -159,7 +160,7 @@ private:
     AudioCodec* codec_ = nullptr;
     AudioServiceCallbacks callbacks_;
     // [custom] see SetDirectionHintCallback
-    std::function<void(float)> direction_hint_cb_;
+    std::function<void(float, float)> direction_hint_cb_;
     std::chrono::steady_clock::time_point last_dir_analysis_{};
     std::unique_ptr<AudioProcessor> audio_processor_;
     std::unique_ptr<WakeWord> wake_word_;
