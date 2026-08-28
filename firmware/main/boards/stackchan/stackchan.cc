@@ -4736,10 +4736,11 @@ private:
         return true;
     }
 
-    // [custom v5] Server-rendered text image (160x28 RGB565) at screen bottom.
+    // [custom v5] Server-rendered text image (320x40 RGB565) at screen bottom.
     // Bypasses device font entirely — server renders with PIL + full CJK font.
-    static constexpr int kTextImgW = 160;
-    static constexpr int kTextImgH = 28;
+    // [custom v6] full-width 320x40 (was 160x28 half-width, too small to read).
+    static constexpr int kTextImgW = 320;
+    static constexpr int kTextImgH = 40;
     static constexpr size_t kTextImgBytes = kTextImgW * kTextImgH * 2;
     lv_obj_t* text_image_obj_ = nullptr;
     esp_timer_handle_t text_image_timer_ = nullptr;
