@@ -1,6 +1,7 @@
 #include "audio_service.h"
 #include <esp_log.h>
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 
 #define RATE_CVT_CFG(_src_rate, _dest_rate, _channel)        \
@@ -228,6 +229,35 @@ bool AudioService::ReadAudioData(std::vector<int16_t>& data, int sample_rate, in
     /* Update the last input time */
     last_input_time_ = std::chrono::steady_clock::now();
     debug_statistics_.input_count++;
+
+    // [custom] Stereo direction hint: compare L/R channel RMS every 500 ms
+    // and fire the registered callback for loud, clearly one-sided sounds.
+    // The board uses this to turn the head toward the sound source.
+    if (codec_->input_channels() == 2 && direction_hint_cb_) {
+        auto now = std::chrono::steady_clock::now();
+        if (now - last_dir_analysis_ >= std::chrono::milliseconds(500)) {
+            last_dir_analysis_ = now;
+            double l_acc = 0.0, r_acc = 0.0;
+            size_t frames = data.size() / 2;
+            for (size_t i = 0; i + 1 < data.size(); i += 2) {
+                l_acc += (double)data[i] * data[i];
+                r_acc += (double)data[i + 1] * data[i + 1];
+            }
+            if (frames > 0) {
+                double l = std::sqrt(l_acc / frames);
+                double r = std::sqrt(r_acc / frames);
+                double peak = std::max(l, r);
+                constexpr double kSoundRms = 700.0;    // speech at the mic
+                constexpr double kImbalanceMin = 0.35; // clearly one-sided
+                if (peak > kSoundRms) {
+                    float imbalance = (float)((r - l) / peak); // -1 L .. +1 R
+                    if (std::fabs(imbalance) >= kImbalanceMin) {
+                        direction_hint_cb_(imbalance);
+                    }
+                }
+            }
+        }
+    }
 
 #if CONFIG_USE_AUDIO_DEBUGGER
     // 音频调试：发送原始音频数据

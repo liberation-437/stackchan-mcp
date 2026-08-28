@@ -5,6 +5,7 @@
 #include <deque>
 #include <condition_variable>
 #include <chrono>
+#include <functional>
 #include <mutex>
 #include <vector>
 #include <atomic>
@@ -138,6 +139,15 @@ public:
 
     void SetCallbacks(AudioServiceCallbacks& callbacks);
 
+    // [custom] Sound-source direction hint: the board registers a callback
+    // that receives the L/R energy imbalance (-1 left .. +1 right) whenever
+    // a loud, clearly one-sided sound is present in the stereo capture.
+    // Kept SEPARATE from AudioServiceCallbacks so Application's own
+    // SetCallbacks() (which overwrites the whole struct) cannot clobber it.
+    void SetDirectionHintCallback(std::function<void(float)> cb) {
+        direction_hint_cb_ = std::move(cb);
+    }
+
     bool PushPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket> packet, bool wait = false);
     std::unique_ptr<AudioStreamPacket> PopPacketFromSendQueue();
     void PlaySound(const std::string_view& sound);
@@ -148,6 +158,9 @@ public:
 private:
     AudioCodec* codec_ = nullptr;
     AudioServiceCallbacks callbacks_;
+    // [custom] see SetDirectionHintCallback
+    std::function<void(float)> direction_hint_cb_;
+    std::chrono::steady_clock::time_point last_dir_analysis_{};
     std::unique_ptr<AudioProcessor> audio_processor_;
     std::unique_ptr<WakeWord> wake_word_;
     std::unique_ptr<AudioDebugger> audio_debugger_;

@@ -4314,6 +4314,30 @@ private:
         Application::GetInstance().SendStackChanEvent("touch", "stroke", duration_ms);
     }
 
+    // [custom] Sound-source orientation. imbalance: -1 (left) .. +1 (right)
+    // from the stereo mic pair, delivered via AudioService's direction-hint
+    // callback (hopped to the main task). Idle-only, throttled to 4 s, keeps
+    // the current pitch. If the head turns AWAY from the sound on real
+    // hardware, flip the yaw sign below.
+    int64_t last_dir_turn_us_ = 0;
+    void OnDirectionHint(float imbalance) {
+        if (Application::GetInstance().GetDeviceState() != kDeviceStateIdle) {
+            return;
+        }
+        int64_t now_us = esp_timer_get_time();
+        if (now_us - last_dir_turn_us_ < 4000 * 1000LL) {
+            return;
+        }
+        if (imbalance > -0.35f && imbalance < 0.35f) {
+            return;
+        }
+        last_dir_turn_us_ = now_us;
+        int yaw = (imbalance < 0.0f) ? -38 : 38;
+        int pitch = (int)pitch_motion_.current_deg;
+        ESP_LOGI(TAG, "direction hint %.2f -> turn head yaw=%d", imbalance, yaw);
+        WriteHeadAngles(yaw, pitch, 60);
+    }
+
     // 200 ms periodic poll. Reads the sensor, applies a 2-sample debounce on
     // the OR of the three head zones, and emits TAP/STROKE on falling edges.
     static void TouchPollCb(void* arg) {
@@ -4338,7 +4362,14 @@ private:
         bool any_pressed = s.zone[0] || s.zone[1] || s.zone[2];
 
         // Asymmetric debounce:
-        //   press   confirm = 2 samples ( 200 ms) — fast tap detection
+        //   press   confirm = 1 sample  ( 100 ms) — [custom v2] was 2/200ms;
+        //                                            fast "pon" taps (<200ms
+        //                                            contact) were being
+        //                                            dropped entirely, which
+        //                                            made TAP feel dead.
+        //                                            Si12T digital output
+        //                                            makes single-sample
+        //                                            noise unlikely.
         //   release confirm = 4 samples ( 400 ms) — bridges Si12T recalibration
         //                                            and finger-glide gaps that
         //                                            otherwise cut a stroke
@@ -4352,7 +4383,7 @@ private:
             touch_pending_count_ = 1;
             touch_pressed_pending_ = any_pressed;
         }
-        const int needed = touch_pressed_pending_ ? 2 : 4;
+        const int needed = touch_pressed_pending_ ? 1 : 4;
         if (touch_pending_count_ < needed) {
             return;  // not yet debounced
         }
@@ -4696,15 +4727,11 @@ private:
         // free for the native chat message area (chat_message tool).
         // Widget TOP_MID y=35: widget center y=95, image y=20-170.
         // Status bar (y=0-20) and chat area (y=170-240) both visible.
-        lv_image_set_scale(avatar_img_, 320);
-        // 1.25x scales around widget center: widget h=120, scaled h=150, so
-        // image top = y + 60 - 75 = y - 15. y=45 puts the image at 30..180,
-        // clear of the stock status bar (top ~28px) — same proven offset as
-        // the old 1.75x layout.
-        // [custom v5] y=55 lowers the face ~10px (image y=40..190) after the
-        // kaomoji frames were upscaled to fill the canvas; bottom stays clear
-        // of the 200-240 subtitle strip.
-        lv_obj_align(avatar_img_, LV_ALIGN_TOP_MID, 0, 55);
+        // [custom v6] fill the space between the status bar (~y28) and the
+        // subtitle strip (y200): scale 367 = 1.433x -> 229x172 card, image
+        // top = y + 60 - 86 = y - 26. y=54 puts the image at 28..200.
+        lv_image_set_scale(avatar_img_, 367);
+        lv_obj_align(avatar_img_, LV_ALIGN_TOP_MID, 0, 54);
         lv_obj_clear_flag(avatar_img_, LV_OBJ_FLAG_SCROLLABLE);
         // Keep the avatar visually on top of the chat UI's emoji_label_,
         // chat bubbles, etc. The status bar (clock/battery) lives on a
@@ -7631,6 +7658,14 @@ public:
         // Avatar is shown on-demand via MCP set_avatar command.
         // InitializeAvatar();
         InitializeMouthSequenceTask();
+        // [custom] Look toward loud sounds: AudioService fires the stereo
+        // imbalance callback on the audio input task; hop to the main task
+        // for the servo write.
+        Application::GetInstance().GetAudioService().SetDirectionHintCallback(
+            [this](float imbalance) {
+                Application::GetInstance().Schedule(
+                    [this, imbalance]() { OnDirectionHint(imbalance); });
+            });
         RegisterMcpTools();
     }
 
