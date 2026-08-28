@@ -4697,7 +4697,11 @@ private:
         // Widget TOP_MID y=35: widget center y=95, image y=20-170.
         // Status bar (y=0-20) and chat area (y=170-240) both visible.
         lv_image_set_scale(avatar_img_, 320);
-        lv_obj_align(avatar_img_, LV_ALIGN_TOP_MID, 0, 35);
+        // 1.25x scales around widget center: widget h=120, scaled h=150, so
+        // image top = y + 60 - 75 = y - 15. y=45 puts the image at 30..180,
+        // clear of the stock status bar (top ~28px) — same proven offset as
+        // the old 1.75x layout.
+        lv_obj_align(avatar_img_, LV_ALIGN_TOP_MID, 0, 45);
         lv_obj_clear_flag(avatar_img_, LV_OBJ_FLAG_SCROLLABLE);
         // Keep the avatar visually on top of the chat UI's emoji_label_,
         // chat bubbles, etc. The status bar (clock/battery) lives on a
