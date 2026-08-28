@@ -4701,7 +4701,10 @@ private:
         // image top = y + 60 - 75 = y - 15. y=45 puts the image at 30..180,
         // clear of the stock status bar (top ~28px) — same proven offset as
         // the old 1.75x layout.
-        lv_obj_align(avatar_img_, LV_ALIGN_TOP_MID, 0, 45);
+        // [custom v5] y=55 lowers the face ~10px (image y=40..190) after the
+        // kaomoji frames were upscaled to fill the canvas; bottom stays clear
+        // of the 200-240 subtitle strip.
+        lv_obj_align(avatar_img_, LV_ALIGN_TOP_MID, 0, 55);
         lv_obj_clear_flag(avatar_img_, LV_OBJ_FLAG_SCROLLABLE);
         // Keep the avatar visually on top of the chat UI's emoji_label_,
         // chat bubbles, etc. The status bar (clock/battery) lives on a
