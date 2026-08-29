@@ -21,7 +21,18 @@ CONFIG_MBEDTLS_DYNAMIC_FREE_CONFIG_DATA=y
 CONFIG_ESP32S3_INSTRUCTION_CACHE_32KB=y
 CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
 
-CONFIG_SR_WN_WN9_NIHAOXIAOZHI_TTS=y
+# [A9] Custom wake word: call the robot by name ("小克小克") via MultiNet
+# command-phrase recognition instead of the fixed "你好小智" WakeNet model.
+# Threshold 50 (%): higher = stricter, guards against false wakes from
+# casual speech (user explicitly rejected always-on / free wake behaviour).
+CONFIG_USE_CUSTOM_WAKE_WORD=y
+CONFIG_CUSTOM_WAKE_WORD="xiao ke xiao ke"
+CONFIG_CUSTOM_WAKE_WORD_DISPLAY="小克"
+CONFIG_CUSTOM_WAKE_WORD_THRESHOLD=50
+CONFIG_SR_MN_CN_MULTINET7_QUANT=y
+# Our MCP gateway does not consume the wake-word audio as a first message;
+# waking should just open the mic (listening state) like before.
+CONFIG_SEND_WAKE_WORD_DATA=n
 
 CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=4096
 

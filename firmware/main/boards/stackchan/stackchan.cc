@@ -777,12 +777,13 @@ private:
     };
     static constexpr int TOUCH_POLL_MS    = 100;  // 100 Hz polling
     static constexpr int TAP_MAX_MS       = 400;
-    static constexpr int STROKE_MIN_MS    = 400;  // was 600; lowered because
-                                                  // finger-glide between zones
-                                                  // and Si12T auto-recalibration
-                                                  // inject brief "all-false"
-                                                  // gaps that cut a real stroke
-                                                  // short of 600 ms.
+    static constexpr int STROKE_MIN_MS    = 550;  // was 400 (600 before that):
+                                                  // 400 misclassified slower taps
+                                                  // as strokes. 550 keeps real
+                                                  // strokes (finger-glide across
+                                                  // zones usually >700 ms) while
+                                                  // letting deliberate taps
+                                                  // (<500 ms) read as TAP.
     static constexpr int REACTION_HOLD_MS = 3000;
     // [custom v2] was 800: rapid tapping (~2/s, 500 ms gaps) had most events
     // swallowed by the cooldown. 350 ms keeps anti-noise while letting
