@@ -4332,6 +4332,16 @@ private:
         snprintf(diag, sizeof(diag), "imb=%.2f rms=%.0f",
                  (double)imbalance, (double)level);
         Application::GetInstance().SendStackChanEvent("sound", diag, 0);
+        // [custom 0829] Head turning on sound direction DISABLED: the ES7210
+        // mixes both mics to mono (cores3_audio_codec.cc input_channels_=1),
+        // so the computed imbalance is a constant fake value (~-0.98). With
+        // the custom wake word path the analysis runs on that mono stream and
+        // the head was being dragged to yaw=-38 every few seconds, walking
+        // away from the user's manually set pose. Re-enable only after the
+        // TDM mic-split brings real per-channel data (A3).
+        if (true) {
+            return;
+        }
         if (Application::GetInstance().GetDeviceState() != kDeviceStateIdle) {
             return;
         }

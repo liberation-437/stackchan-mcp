@@ -956,8 +956,17 @@ void Application::HandleWakeWordDetectedEvent() {
             });
             return;
         }
-        // Channel already opened, continue directly
-        ContinueWakeWordInvoke(wake_word, generation);
+        // [custom fix 0829] Channel already opened: ContinueWakeWordInvoke()
+        // guards on GetDeviceState() == kDeviceStateConnecting. Calling it
+        // directly from the idle state made the guard silently reject the
+        // wake AND left wake word detection disarmed forever (second wake
+        // while the channel was still open was dead). Route through the
+        // same SetDeviceState + Schedule path as the closed-channel branch
+        // so the state change is processed before the invoke runs.
+        SetDeviceState(kDeviceStateConnecting);
+        Schedule([this, wake_word, generation]() {
+            ContinueWakeWordInvoke(wake_word, generation);
+        });
     } else if (state == kDeviceStateSpeaking || state == kDeviceStateListening) {
         AbortSpeaking(kAbortReasonWakeWordDetected);
         // Clear send queue to avoid sending residues to server
@@ -984,6 +993,12 @@ void Application::ContinueWakeWordInvoke(const std::string& wake_word, uint32_t 
     // Check state again in case it was changed during scheduling
     if (GetDeviceState() != kDeviceStateConnecting || !IsListeningRequestCurrent(generation)) {
         listening_profile_ = ListeningProfileAfterStop(listening_profile_);
+        // [custom fix 0829] never leave wake word detection disarmed on a
+        // rejected invoke; otherwise one stale generation kills all future
+        // wakes until reboot.
+        if (GetDeviceState() == kDeviceStateIdle) {
+            audio_service_.EnableWakeWordDetection(true);
+        }
         return;
     }
 
