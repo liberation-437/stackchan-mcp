@@ -594,7 +594,7 @@ private:
 // 信道 = 本机 STA 信道（家里 AP）；遥控器 SETUP 屏（BtnB 循环）调到同一信道即可配对
 class StackChanBoard;
 static StackChanBoard* g_espnow_board = nullptr;
-static void _espnow_remote_recv_cb(uint8_t* src_addr, void* data, size_t len, wifi_pkt_rx_ctrl_t* rx_ctrl);
+static int _espnow_remote_recv_cb(uint8_t* src_addr, void* data, size_t len, wifi_pkt_rx_ctrl_t* rx_ctrl);
 
 class StackChanBoard : public WifiBoard {
 private:
@@ -7997,14 +7997,15 @@ public:
 
 // [A5] ESP-NOW 遥控接收回调实现（组件在 espnow 任务上下文调用这里，
 // 只做解析 + 舵机目标设置；WriteHeadAngles 内部有锁与插值任务，跨任务安全）
-static void _espnow_remote_recv_cb(uint8_t* src_addr, void* data, size_t len, wifi_pkt_rx_ctrl_t* rx_ctrl) {
+static int _espnow_remote_recv_cb(uint8_t* src_addr, void* data, size_t len, wifi_pkt_rx_ctrl_t* rx_ctrl) {
     if (g_espnow_board == nullptr || data == nullptr || len < 8) {
-        return;
+        return ESP_OK;
     }
     const uint8_t* pkt = (const uint8_t*)data;
     int yaw_deg   = (int16_t)(pkt[1] | (pkt[2] << 8));  // ±1280 → ±128.0°
     int pitch_deg = (int16_t)(pkt[3] | (pkt[4] << 8));  // 0..900 → 0..90°
     g_espnow_board->EspNowRemoteApply(yaw_deg / 10, pitch_deg / 10);
+    return ESP_OK;
 }
 
 DECLARE_BOARD(StackChanBoard);
