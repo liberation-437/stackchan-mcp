@@ -1,6 +1,7 @@
 #include "websocket_protocol.h"
 #include "mdns_gateway_discovery.h"
 #include "board.h"
+#include "display/display.h"
 #include "system_info.h"
 #include "application.h"
 #include "settings.h"
@@ -56,10 +57,25 @@ WebsocketProtocol::WebsocketProtocol() {
                 auto& app = Application::GetInstance();
                 auto state = app.GetDeviceState();
                 if (state != kDeviceStateIdle) {
-                    ESP_LOGI(TAG, "Reconnect deferred (device state %d != idle); rescheduling", state);
-                    protocol->ScheduleReconnect();
-                    return;
+                    // [A11 0830] 传输已断的情况下，Listening/Speaking/Connecting
+                    // 都是僵尸态：音频流已死，状态永远等不回 Idle，下面的推迟
+                    // 分支会无限循环——这就是"设备死连、只能插线硬复位"的根因
+                    // （0829-0830 多次复现）。会话类僵尸态强制回 Idle 再重连；
+                    // WifiConfiguring/Upgrading/Activating 等系统态仍推迟。
+                    bool zombie = (state == kDeviceStateListening ||
+                                   state == kDeviceStateSpeaking ||
+                                   state == kDeviceStateConnecting);
+                    if (!zombie) {
+                        ESP_LOGI(TAG, "Reconnect deferred (device state %d != idle); rescheduling", state);
+                        protocol->ScheduleReconnect();
+                        return;
+                    }
+                    ESP_LOGW(TAG, "Reconnect: forcing zombie state %d back to idle", state);
+                    app.SetDeviceState(kDeviceStateIdle);
                 }
+
+                // [C5 0830] 断连期间状态栏常驻提示（重连成功后清除）
+                Board::GetInstance().GetDisplay()->SetStatus("服务器未连接,重试中");
 
                 ESP_LOGI(TAG, "Reconnecting to websocket server");
                 if (!protocol->OpenAudioChannelInternal(false, false)) {
@@ -623,6 +639,8 @@ bool WebsocketProtocol::OpenAudioChannelInternal(bool report_error, bool arm_aud
         transport_connected_.store(true);
         reconnect_interval_ms_ = WEBSOCKET_RECONNECT_INITIAL_INTERVAL_MS;
         StopReconnectTimer();
+        // [C5 0830] 重连成功：清除断连提示，恢复待机状态栏文案
+        Board::GetInstance().GetDisplay()->SetStatus(Lang::Strings::STANDBY);
 
         if (on_connected_ != nullptr) {
             on_connected_();
