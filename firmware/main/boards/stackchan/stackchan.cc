@@ -37,6 +37,7 @@ static inline bool ServoWritePosOk(int r) { return r > 0; }
 #include <smooth_ui_toolkit.hpp>
 #include <esp_log.h>
 #include <esp_wifi.h>
+#include <espnow.h>
 #include <driver/i2c_master.h>
 #include <driver/gpio.h>
 #include <driver/uart.h>
@@ -587,6 +588,13 @@ private:
         return true;
     }
 };
+
+// [A5 0830] ESP-NOW 物理遥控器（StickC-Plus + JoyC 帽，官方 StackChan-RemoteControl-ESPNow）
+// 8 字节广播包：[0]=target-id [1..2]=yaw 0.1°LE(±1280) [3..4]=pitch 0.1°LE(0..900) [5..6]=speed [7]=btnB
+// 信道 = 本机 STA 信道（家里 AP）；遥控器 SETUP 屏（BtnB 循环）调到同一信道即可配对
+class StackChanBoard;
+static StackChanBoard* g_espnow_board = nullptr;
+static void _espnow_remote_recv_cb(uint8_t* src_addr, void* data, size_t len, wifi_pkt_rx_ctrl_t* rx_ctrl);
 
 class StackChanBoard : public WifiBoard {
 private:
@@ -7658,6 +7666,46 @@ private:
     }
 
 public:
+    // [A5] 遥控器包 → 舵机（0.1°→1°；WriteHeadAngles 内部有机械安全钳位）
+    void EspNowRemoteApply(int yaw_deg, int pitch_deg) {
+        WriteHeadAngles(yaw_deg, pitch_deg, 120);
+    }
+
+    // [A5] 延迟初始化：等 WiFi STA 就绪（其信道即遥控器需匹配的信道）后拉起 ESP-NOW 接收。
+    // 全程非致命：初始化失败只记录并禁用该功能，不影响主流程启动。
+    void InitializeEspNowRemote() {
+        g_espnow_board = this;
+        xTaskCreate([](void* arg) {
+            auto self = (StackChanBoard*)arg;
+            uint8_t pri = 0;
+            wifi_second_chan_t sec;
+            for (int i = 0; i < 150; ++i) {  // 最多等 30s WiFi 就绪
+                if (esp_wifi_get_channel(&pri, &sec) == ESP_OK && pri != 0) {
+                    break;
+                }
+                vTaskDelay(pdMS_TO_TICKS(200));
+            }
+            espnow_config_t cfg = ESPNOW_INIT_CONFIG_DEFAULT();
+            cfg.forward_enable         = false;
+            cfg.forward_switch_channel = false;
+            cfg.send_retry_num         = 5;
+            cfg.receive_enable.forward = false;
+            cfg.receive_enable.data    = true;  // 接收遥控器数据包（关键开关）
+            esp_err_t err = espnow_init(&cfg);
+            if (err != ESP_OK) {
+                ESP_LOGW(TAG, "ESP-NOW remote init failed: %s — feature disabled", esp_err_to_name(err));
+                g_espnow_board = nullptr;
+                vTaskDelete(nullptr);
+                return;
+            }
+            espnow_set_config_for_data_type(ESPNOW_DATA_TYPE_DATA, true, _espnow_remote_recv_cb);
+            esp_wifi_get_channel(&pri, &sec);
+            ESP_LOGI(TAG, "ESP-NOW 遥控接收已启动（信道 %d，等待 StickC 遥控器配对）", pri);
+            vTaskDelete(nullptr);
+        }, "espnow_rx", 4096, this, 3, nullptr);
+    }
+
+public:
     StackChanBoard() {
         InitializePowerSaveTimer();
         InitializeI2c();
@@ -7679,6 +7727,7 @@ public:
         GetBacklight()->RestoreBrightness();
         InitializeIOExpander();
         InitializeServo();
+        InitializeEspNowRemote();
         InitializeTouchSettings();
         InitializeSi12tTouch();
         I2cDetect();
@@ -7945,5 +7994,17 @@ public:
         return &backlight;
     }
 };
+
+// [A5] ESP-NOW 遥控接收回调实现（组件在 espnow 任务上下文调用这里，
+// 只做解析 + 舵机目标设置；WriteHeadAngles 内部有锁与插值任务，跨任务安全）
+static void _espnow_remote_recv_cb(uint8_t* src_addr, void* data, size_t len, wifi_pkt_rx_ctrl_t* rx_ctrl) {
+    if (g_espnow_board == nullptr || data == nullptr || len < 8) {
+        return;
+    }
+    const uint8_t* pkt = (const uint8_t*)data;
+    int yaw_deg   = (int16_t)(pkt[1] | (pkt[2] << 8));  // ±1280 → ±128.0°
+    int pitch_deg = (int16_t)(pkt[3] | (pkt[4] << 8));  // 0..900 → 0..90°
+    g_espnow_board->EspNowRemoteApply(yaw_deg / 10, pitch_deg / 10);
+}
 
 DECLARE_BOARD(StackChanBoard);
