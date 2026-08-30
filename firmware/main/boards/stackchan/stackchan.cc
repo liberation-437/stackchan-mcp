@@ -777,13 +777,16 @@ private:
     };
     static constexpr int TOUCH_POLL_MS    = 100;  // 100 Hz polling
     static constexpr int TAP_MAX_MS       = 400;
-    static constexpr int STROKE_MIN_MS    = 550;  // was 400 (600 before that):
-                                                  // 400 misclassified slower taps
-                                                  // as strokes. 550 keeps real
-                                                  // strokes (finger-glide across
-                                                  // zones usually >700 ms) while
-                                                  // letting deliberate taps
-                                                  // (<500 ms) read as TAP.
+    static constexpr int STROKE_MIN_MS    = 450;  // was 550: user's strokes get
+                                                  // segmented into 300-500 ms
+                                                  // contacts by natural hand
+                                                  // lifts (0830 data), so 550
+                                                  // missed most strokes. 450
+                                                  // keeps deliberate taps
+                                                  // (<400 ms) on TAP while
+                                                  // catching 450+ ms glide
+                                                  // contacts; grey zone now
+                                                  // 400-450 ms.
     static constexpr int REACTION_HOLD_MS = 3000;
     // [custom v2] was 800: rapid tapping (~2/s, 500 ms gaps) had most events
     // swallowed by the cooldown. 350 ms keeps anti-noise while letting
