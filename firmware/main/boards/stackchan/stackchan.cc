@@ -7666,9 +7666,10 @@ private:
     }
 
 public:
-    // [A5] 遥控器包 → 舵机（0.1°→1°；WriteHeadAngles 内部有机械安全钳位）
-    void EspNowRemoteApply(int yaw_deg, int pitch_deg) {
-        WriteHeadAngles(yaw_deg, pitch_deg, 120);
+    // [A5] 遥控器包 → 舵机（0.1°→1°；speed_dps 由平滑器按剩余距离算出，
+    // WriteHeadAngles 的 int 重载内部有安全钳位）
+    void EspNowRemoteApply(int yaw_deg, int pitch_deg, int speed_dps) {
+        WriteHeadAngles(yaw_deg, pitch_deg, speed_dps);
     }
 
     // [A5] 延迟初始化：等 WiFi STA 就绪（其信道即遥控器需匹配的信道）后拉起 ESP-NOW 接收。
