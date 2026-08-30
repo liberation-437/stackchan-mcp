@@ -7997,6 +7997,18 @@ public:
 
 // [A5] ESP-NOW 遥控接收回调实现（组件在 espnow 任务上下文调用这里，
 // 只做解析 + 舵机目标设置；WriteHeadAngles 内部有锁与插值任务，跨任务安全）
+// [A5] 平滑追踪：每包只向最新目标推进一部分（指数平滑），速度按剩余距离等比——
+// 遥控器的绝对目标包是 30ms 离散流，直接逐包跳变会让头一顿一顿（0830 用户实测）
+static constexpr int ESPNOW_SMOOTH_PCT    = 45;   // 每包推进剩余距离的百分比
+static constexpr int ESPNOW_SPEED_PER_DEG = 12;   // 剩余距离→速度(dps) 系数
+static constexpr int ESPNOW_SPEED_MIN     = 60;
+static constexpr int ESPNOW_SPEED_MAX     = 400;
+static constexpr int64_t ESPNOW_STALE_MS  = 2000; // 停发超 2s 视为新一次追踪
+
+static int _sm_yaw = 0, _sm_pitch = 0;
+static bool _sm_valid = false;
+static int64_t _sm_last_ms = 0;
+
 static int _espnow_remote_recv_cb(uint8_t* src_addr, void* data, size_t len, wifi_pkt_rx_ctrl_t* rx_ctrl) {
     if (g_espnow_board == nullptr || data == nullptr || len < 8) {
         return ESP_OK;
@@ -8004,7 +8016,24 @@ static int _espnow_remote_recv_cb(uint8_t* src_addr, void* data, size_t len, wif
     const uint8_t* pkt = (const uint8_t*)data;
     int yaw_deg   = (int16_t)(pkt[1] | (pkt[2] << 8));  // ±1280 → ±128.0°
     int pitch_deg = (int16_t)(pkt[3] | (pkt[4] << 8));  // 0..900 → 0..90°
-    g_espnow_board->EspNowRemoteApply(yaw_deg / 10, pitch_deg / 10);
+    yaw_deg /= 10;
+    pitch_deg /= 10;
+
+    int64_t now_ms = esp_timer_get_time() / 1000;
+    if (!_sm_valid || (now_ms - _sm_last_ms) > ESPNOW_STALE_MS) {
+        _sm_yaw   = yaw_deg;
+        _sm_pitch = pitch_deg;
+        _sm_valid = true;
+    } else {
+        _sm_yaw   += (yaw_deg - _sm_yaw) * ESPNOW_SMOOTH_PCT / 100;
+        _sm_pitch += (pitch_deg - _sm_pitch) * ESPNOW_SMOOTH_PCT / 100;
+    }
+    int speed = (abs(yaw_deg - _sm_yaw) + abs(pitch_deg - _sm_pitch)) * ESPNOW_SPEED_PER_DEG
+                + ESPNOW_SPEED_MIN;
+    speed = (speed > ESPNOW_SPEED_MAX) ? ESPNOW_SPEED_MAX : speed;
+    _sm_last_ms = now_ms;
+
+    g_espnow_board->EspNowRemoteApply(_sm_yaw, _sm_pitch, speed);
     return ESP_OK;
 }
 
