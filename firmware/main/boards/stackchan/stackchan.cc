@@ -811,7 +811,7 @@ private:
                                                        // interpolation time
                                                        // (smoothness is the
                                                        // servo's job now).
-    static constexpr int SERVO_WOBBLE_AMPLITUDE_DEG = 40;  // default only;
+    static constexpr int SERVO_WOBBLE_AMPLITUDE_DEG = 25;  // default only;
                                                        // runtime-adjustable
                                                        // via
                                                        // self.robot.set_wobble_params
@@ -5983,7 +5983,7 @@ private:
                 wobble_amplitude_deg_.store(amplitude, std::memory_order_release);
                 cJSON* root = cJSON_CreateObject();
                 cJSON_AddBoolToObject(root, "ok", true);
-                cJSON_AddIntegerToObject(root, "amplitude", amplitude);
+                cJSON_AddNumberToObject(root, "amplitude", amplitude);
                 cJSON_AddStringToObject(root, "takes_effect", "immediate");
                 cJSON_AddStringToObject(root, "persistence", "nvs");
                 return root;
