@@ -6,6 +6,8 @@
 #include <mbedtls/sha256.h>
 #include <esp_heap_caps.h>
 #include <esp_log.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 #include "board.h"
 #include "display/display.h"
@@ -15,6 +17,12 @@
 namespace {
 
 constexpr size_t kReadChunkBytes = 4096;
+// [0831 A12] The 3.4MB avatar transfer over a home broadband uplink drops
+// intermittently (read_failed mid-stream, 0-byte stalls). Retry the whole
+// download instead of leaving the device on the placeholder face until the
+// server side re-pushes.
+constexpr int kFetchAttempts = 3;
+constexpr int kFetchRetryDelayMs = 3000;
 
 std::string Sha256Hex(const uint8_t* data, size_t size) {
     uint8_t hash[32];
@@ -37,18 +45,54 @@ void AvatarSetFetcher::Fetch(
     size_t expected_size,
     const std::string& expected_sha256,
     CompletionCallback on_complete) {
+    std::string last_actual_sha256;
+    std::string last_error;
+    for (int attempt = 1; attempt <= kFetchAttempts; ++attempt) {
+        bool ok = false;
+        std::string actual_sha256;
+        std::string error;
+        FetchOnce(target_set, url, bearer_token, mode, expected_size,
+                  expected_sha256, ok, actual_sha256, error);
+        if (ok) {
+            on_complete(true, actual_sha256, "");
+            return;
+        }
+        last_actual_sha256 = actual_sha256;
+        last_error = error;
+        ESP_LOGW(TAG, "Fetch: attempt %d/%d failed (%s); %s",
+                 attempt, kFetchAttempts, error.c_str(),
+                 attempt < kFetchAttempts ? "retrying" : "giving up");
+        if (attempt < kFetchAttempts) {
+            // Free the previous staging buffer's pressure window before the
+            // retry; FetchOnce allocates/frees per attempt already.
+            vTaskDelay(pdMS_TO_TICKS(kFetchRetryDelayMs));
+        }
+    }
+    on_complete(false, last_actual_sha256, last_error);
+}
+
+void AvatarSetFetcher::FetchOnce(
+    AvatarSet& target_set,
+    const std::string& url,
+    const std::string& bearer_token,
+    AvatarSet::Mode mode,
+    size_t expected_size,
+    const std::string& expected_sha256,
+    bool& ok,
+    std::string& actual_sha256_out,
+    std::string& error_out) {
     auto& board = Board::GetInstance();
     auto network = board.GetNetwork();
     if (network == nullptr) {
         ESP_LOGE(TAG, "Fetch: network is null");
-        on_complete(false, "", "http_open_failed");
+        error_out = "http_open_failed";
         return;
     }
 
     auto http = network->CreateHttp(0);
     if (http == nullptr) {
         ESP_LOGE(TAG, "Fetch: CreateHttp returned null");
-        on_complete(false, "", "http_open_failed");
+        error_out = "http_open_failed";
         return;
     }
 
@@ -57,7 +101,7 @@ void AvatarSetFetcher::Fetch(
 
     if (!http->Open("GET", url)) {
         ESP_LOGE(TAG, "Fetch: Open failed for url=%s", url.c_str());
-        on_complete(false, "", "http_open_failed");
+        error_out = "http_open_failed";
         return;
     }
 
@@ -67,7 +111,7 @@ void AvatarSetFetcher::Fetch(
                  static_cast<unsigned int>(content_length),
                  static_cast<unsigned int>(expected_size));
         http->Close();
-        on_complete(false, "", "content_length_mismatch");
+        error_out = "content_length_mismatch";
         return;
     }
 
@@ -82,7 +126,7 @@ void AvatarSetFetcher::Fetch(
         ESP_LOGE(TAG, "Fetch: PSRAM staging allocation failed (size=%u)",
                  static_cast<unsigned int>(expected_size));
         http->Close();
-        on_complete(false, "", "psram_oom");
+        error_out = "psram_oom";
         return;
     }
 
@@ -96,7 +140,7 @@ void AvatarSetFetcher::Fetch(
                      static_cast<unsigned int>(total_read), n);
             heap_caps_free(buffer);
             http->Close();
-            on_complete(false, "", "read_failed");
+            error_out = "read_failed";
             return;
         }
         total_read += static_cast<size_t>(n);
@@ -104,12 +148,13 @@ void AvatarSetFetcher::Fetch(
     http->Close();
 
     const std::string actual_sha256 = Sha256Hex(buffer, expected_size);
+    actual_sha256_out = actual_sha256;
 
     if (!expected_sha256.empty() && actual_sha256 != expected_sha256) {
         ESP_LOGW(TAG, "Fetch: SHA256 mismatch (actual=%s expected=%s)",
                  actual_sha256.c_str(), expected_sha256.c_str());
         heap_caps_free(buffer);
-        on_complete(false, actual_sha256, "checksum_mismatch");
+        error_out = "checksum_mismatch";
         return;
     }
 
@@ -136,7 +181,7 @@ void AvatarSetFetcher::Fetch(
     }
     if (!loaded) {
         heap_caps_free(buffer);
-        on_complete(false, actual_sha256, "load_failed");
+        error_out = "load_failed";
         return;
     }
 
@@ -149,5 +194,5 @@ void AvatarSetFetcher::Fetch(
              static_cast<int>(mode),
              static_cast<unsigned int>(expected_size),
              actual_sha256.c_str());
-    on_complete(true, actual_sha256, "");
+    ok = true;
 }

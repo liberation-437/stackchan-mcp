@@ -39,6 +39,10 @@ public:
     // Synchronously fetch + verify + load. Blocks the calling task until
     // completion. Intended to be invoked from a worker task (= not from
     // the WS receive callback directly).
+    // [0831 A12] Retries the whole download up to 3 times (3 s apart) on
+    // any transport failure — the 3.4MB transfer over a home uplink is
+    // flaky and a single-shot failure left the device on the placeholder
+    // face until the server re-pushed.
     static void Fetch(
         AvatarSet& target_set,
         const std::string& url,
@@ -47,4 +51,18 @@ public:
         size_t expected_size,
         const std::string& expected_sha256,  // "sha256:<hex>" form, may be empty to skip
         CompletionCallback on_complete);
+
+private:
+    // One download attempt. Sets ok/actual_checksum/error_code; never calls
+    // the callback (Fetch owns the retry loop and the single final report).
+    static void FetchOnce(
+        AvatarSet& target_set,
+        const std::string& url,
+        const std::string& bearer_token,
+        AvatarSet::Mode mode,
+        size_t expected_size,
+        const std::string& expected_sha256,
+        bool& ok,
+        std::string& actual_checksum,
+        std::string& error_code);
 };
