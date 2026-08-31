@@ -811,12 +811,16 @@ private:
                                                        // interpolation time
                                                        // (smoothness is the
                                                        // servo's job now).
-    static constexpr int SERVO_WOBBLE_AMPLITUDE_DEG = 25;  // user-verified
-                                                       // smooth under
-                                                       // servo-delegated
-                                                       // motion; asked for
-                                                       // larger than the
-                                                       // original ±20.
+    static constexpr int SERVO_WOBBLE_AMPLITUDE_DEG = 40;  // default only;
+                                                       // runtime-adjustable
+                                                       // via
+                                                       // self.robot.set_wobble_params
+                                                       // (NVS persisted).
+    static constexpr int SERVO_WOBBLE_MAX_AMPLITUDE_DEG = 45;  // guard: keep
+                                                       // total swing < the
+                                                       // sound-turn ±38-era
+                                                       // mechanical comfort.
+    std::atomic<int> wobble_amplitude_deg_{SERVO_WOBBLE_AMPLITUDE_DEG};
 
     std::atomic<bool> touch_sensor_enabled_{true};
     std::unique_ptr<Si12T> si12t_;
@@ -4177,7 +4181,8 @@ private:
             xSemaphoreGive(motion_mutex_);
             return;
         }
-        const int A = SERVO_WOBBLE_AMPLITUDE_DEG;
+        const int A = std::min(wobble_amplitude_deg_.load(std::memory_order_acquire),
+                               SERVO_WOBBLE_MAX_AMPLITUDE_DEG);
         int step = servo_wobble_step_.load();
         // [custom 0831] Decaying wobble around the captured base pose:
         // ±A -> ∓A -> ±A/2 -> ∓A/2 -> home. Gentler than the old ±20°
@@ -4492,6 +4497,11 @@ private:
         bool enabled = settings.GetBool("enabled", true);
         touch_sensor_enabled_.store(enabled, std::memory_order_release);
         ESP_LOGI(TAG, "Touch sensor setting loaded: enabled=%d", enabled ? 1 : 0);
+
+        Settings wobble("wobble", false);
+        int amp = wobble.GetInt("amplitude", SERVO_WOBBLE_AMPLITUDE_DEG);
+        wobble_amplitude_deg_.store(amp, std::memory_order_release);
+        ESP_LOGI(TAG, "Wobble setting loaded: amplitude=%d", amp);
     }
 
     void InitializeSi12tTouch() {
@@ -5946,6 +5956,34 @@ private:
                 cJSON* root = cJSON_CreateObject();
                 cJSON_AddBoolToObject(root, "ok", true);
                 cJSON_AddBoolToObject(root, "enabled", enabled);
+                cJSON_AddStringToObject(root, "takes_effect", "immediate");
+                cJSON_AddStringToObject(root, "persistence", "nvs");
+                return root;
+            });
+
+        mcp_server.AddTool(
+            "self.robot.set_wobble_params",
+            "Adjust the head-stroke (STROKE touch) wobble at runtime. "
+            "amplitude: max yaw swing in degrees (5-45, default 40). "
+            "The decaying sequence swings +/-amplitude, then +/-amplitude/2, "
+            "then returns to the pre-wobble pose. Takes effect immediately "
+            "and persists across reboot (NVS). No reflash needed.",
+            PropertyList({Property("amplitude", kPropertyTypeInteger)}),
+            [this](const PropertyList& properties) -> ReturnValue {
+                int amplitude = properties["amplitude"].value<int>();
+                if (amplitude < 5 || amplitude > SERVO_WOBBLE_MAX_AMPLITUDE_DEG) {
+                    cJSON* err = cJSON_CreateObject();
+                    cJSON_AddBoolToObject(err, "ok", false);
+                    cJSON_AddStringToObject(err, "error",
+                        "amplitude must be 5..45 degrees");
+                    return err;
+                }
+                Settings settings("wobble", true);
+                settings.SetInt("amplitude", amplitude);
+                wobble_amplitude_deg_.store(amplitude, std::memory_order_release);
+                cJSON* root = cJSON_CreateObject();
+                cJSON_AddBoolToObject(root, "ok", true);
+                cJSON_AddIntegerToObject(root, "amplitude", amplitude);
                 cJSON_AddStringToObject(root, "takes_effect", "immediate");
                 cJSON_AddStringToObject(root, "persistence", "nvs");
                 return root;
