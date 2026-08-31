@@ -804,13 +804,22 @@ private:
     // to catch a quick "pon" (~200 ms press) while still rejecting single-
     // sample jitter. Was 200 ms polling -> 400 ms confirm, which silently
     // dropped most short taps.
-    static constexpr int SERVO_WOBBLE_STEP_MS = 350;  // was 200; SCS0009 needs
+    static constexpr int SERVO_WOBBLE_STEP_MS = 300;  // was 200: SCS0009 needs
                                                        // ~125 ms to physically
                                                        // travel ±20°, plus the
                                                        // ACK round-trip + IFG.
                                                        // Tighter steps caused
-                                                       // bus hangs.
-    static constexpr int SERVO_WOBBLE_AMPLITUDE_DEG = 20;
+                                                       // bus hangs. 300 ms is
+                                                       // safe for the smaller
+                                                       // decaying wobble below.
+    static constexpr int SERVO_WOBBLE_AMPLITUDE_DEG = 10;  // was 20: a 4-step
+                                                       // ±20° square wave read
+                                                       // as violent stutter
+                                                       // ("卡卡的"). The new
+                                                       // decaying sequence
+                                                       // swings ±10° -> ±5° ->
+                                                       // home, felt as a gentle
+                                                       // shy shake.
 
     std::atomic<bool> touch_sensor_enabled_{true};
     std::unique_ptr<Si12T> si12t_;
@@ -844,8 +853,12 @@ private:
     // Servo wobble sub-state. Keeps the previously-set angles untouched
     // before/after the wobble so that an external set_head_angles call is
     // not silently overwritten beyond the wobble window.
-    std::atomic<int> servo_wobble_step_{0};       // 0..3 sequence index
+    std::atomic<int> servo_wobble_step_{0};       // sequence index
     std::atomic<bool> servo_wobble_active_{false};
+    // [custom 0831] Base yaw captured when the wobble starts: steps are
+    // relative to the CURRENT pose so a stroke no longer yanks the head to
+    // absolute ±20°/0 and wipes the user's manually set rest pose.
+    std::atomic<int> servo_wobble_base_yaw_{0};
 
     // Shared motion state. This stays on the board singleton because boot-init
     // ReadPos restore / re-sync phases seed the same state before and after the
@@ -4169,7 +4182,11 @@ private:
         }
         const int A = SERVO_WOBBLE_AMPLITUDE_DEG;
         int step = servo_wobble_step_.load();
-        int target_yaw = 0;
+        // [custom 0831] Decaying wobble around the captured base pose:
+        // ±A -> ∓A -> ±A/2 -> ∓A/2 -> home. Gentler than the old ±20°
+        // square wave and returns to the user's rest yaw instead of 0.
+        const int base_yaw = servo_wobble_base_yaw_.load();
+        int target_yaw = base_yaw;
         // Preserve the current pitch through the wobble sequence; only the
         // yaw axis is animated. A hardcoded `target_pitch = 0` on every
         // step would command the SCS0009 pitch axis toward the lower
@@ -4180,10 +4197,11 @@ private:
         // motion_mutex_ is already held (see contract above). #175.
         int target_pitch = pitch_motion_.current_deg;
         switch (step) {
-            case 0: target_yaw = -A; break;
-            case 1: target_yaw = +A; break;
-            case 2: target_yaw = -A; break;
-            case 3: target_yaw =  0; break;
+            case 0: target_yaw = base_yaw - A; break;
+            case 1: target_yaw = base_yaw + A; break;
+            case 2: target_yaw = base_yaw - A / 2; break;
+            case 3: target_yaw = base_yaw + A / 2; break;
+            case 4: target_yaw = base_yaw; break;
             default:
                 servo_wobble_active_.store(false);
                 xSemaphoreGive(motion_mutex_);
@@ -4193,7 +4211,7 @@ private:
         // (not via WriteHeadAngles) avoids the re-entrant mutex take.
         motion_driver_->StartMove(target_yaw, target_pitch, SERVO_WOBBLE_STEP_MS);
         servo_wobble_step_.store(step + 1);
-        if (step + 1 > 3) {
+        if (step + 1 > 4) {
             servo_wobble_active_.store(false);
         }
         xSemaphoreGive(motion_mutex_);
@@ -4227,6 +4245,9 @@ private:
         // is bounded to sub-millisecond hold time.
         xSemaphoreTake(motion_mutex_, portMAX_DELAY);
         servo_wobble_step_.store(0);
+        // [custom 0831] capture the current yaw as wobble centre so the
+        // shake is relative to the live pose and lands back on it.
+        servo_wobble_base_yaw_.store((int)yaw_motion_.current_deg);
         servo_wobble_active_.store(true);
         xSemaphoreGive(motion_mutex_);
     }
