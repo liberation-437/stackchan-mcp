@@ -811,11 +811,12 @@ private:
                                                        // interpolation time
                                                        // (smoothness is the
                                                        // servo's job now).
-    static constexpr int SERVO_WOBBLE_AMPLITUDE_DEG = 15;  // user wants the
-                                                       // large shake back;
-                                                       // decaying sequence
-                                                       // ±15 -> ±8 -> home
-                                                       // still reads shy.
+    static constexpr int SERVO_WOBBLE_AMPLITUDE_DEG = 25;  // user-verified
+                                                       // smooth under
+                                                       // servo-delegated
+                                                       // motion; asked for
+                                                       // larger than the
+                                                       // original ±20.
 
     std::atomic<bool> touch_sensor_enabled_{true};
     std::unique_ptr<Si12T> si12t_;
