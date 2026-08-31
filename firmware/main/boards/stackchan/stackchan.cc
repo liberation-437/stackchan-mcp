@@ -4207,6 +4207,10 @@ private:
             default:
                 servo_wobble_active_.store(false);
                 xSemaphoreGive(motion_mutex_);
+                // [custom 0831] Post-wobble gentle return to center yaw=0
+                // so the head doesn't stay "歪的" if base_yaw drifted.
+                // 600ms delay lets the final step settle first.
+                SchedulePostWobbleCenter();
                 return;
         }
         // StartMove contract: caller holds motion_mutex_. Direct call
@@ -4217,6 +4221,28 @@ private:
             servo_wobble_active_.store(false);
         }
         xSemaphoreGive(motion_mutex_);
+    }
+
+    esp_timer_handle_t post_wobble_timer_ = nullptr;
+    static void PostWobbleCenterCb(void* arg) {
+        auto* self = static_cast<StackChanBoard*>(arg);
+        if (!self->servo_ok_ || self->motion_driver_ == nullptr) return;
+        // Gentle 300ms return to yaw=0, preserving current pitch.
+        self->motion_driver_->StartMove(0, self->pitch_motion_.current_deg, 300);
+    }
+    void SchedulePostWobbleCenter() {
+        if (post_wobble_timer_ == nullptr) {
+            esp_timer_create_args_t args = {
+                .callback = &PostWobbleCenterCb,
+                .arg = this,
+                .dispatch_method = ESP_TIMER_TASK,
+                .name = "post_wobble",
+                .skip_unhandled_events = true,
+            };
+            esp_timer_create(&args, &post_wobble_timer_);
+        }
+        esp_timer_stop(post_wobble_timer_);
+        esp_timer_start_once(post_wobble_timer_, 600 * 1000ULL);
     }
 
     void StartServoWobble() {

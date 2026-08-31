@@ -19,5 +19,5 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 # "Trim" the build. Include the minimal set of components, main, and anything it depends on.
 idf_build_set_property(MINIMAL_BUILD ON)
 
-set(PROJECT_VER "2.2.16")  # A12: avatar fetch auto-retry (3 attempts, 3s apart)
+set(PROJECT_VER "2.2.17")  # post-wobble gentle return to yaw=0 center
 project(xiaozhi)
