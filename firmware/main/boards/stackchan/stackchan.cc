@@ -804,22 +804,18 @@ private:
     // to catch a quick "pon" (~200 ms press) while still rejecting single-
     // sample jitter. Was 200 ms polling -> 400 ms confirm, which silently
     // dropped most short taps.
-    static constexpr int SERVO_WOBBLE_STEP_MS = 300;  // was 200: SCS0009 needs
-                                                       // ~125 ms to physically
-                                                       // travel ±20°, plus the
-                                                       // ACK round-trip + IFG.
-                                                       // Tighter steps caused
-                                                       // bus hangs. 300 ms is
-                                                       // safe for the smaller
-                                                       // decaying wobble below.
-    static constexpr int SERVO_WOBBLE_AMPLITUDE_DEG = 10;  // was 20: a 4-step
-                                                       // ±20° square wave read
-                                                       // as violent stutter
-                                                       // ("卡卡的"). The new
+    static constexpr int SERVO_WOBBLE_STEP_MS = 450;  // servo-delegated mode:
+                                                       // one WritePos per step
+                                                       // with this as the
+                                                       // SCS0009 internal
+                                                       // interpolation time
+                                                       // (smoothness is the
+                                                       // servo's job now).
+    static constexpr int SERVO_WOBBLE_AMPLITUDE_DEG = 15;  // user wants the
+                                                       // large shake back;
                                                        // decaying sequence
-                                                       // swings ±10° -> ±5° ->
-                                                       // home, felt as a gentle
-                                                       // shy shake.
+                                                       // ±15 -> ±8 -> home
+                                                       // still reads shy.
 
     std::atomic<bool> touch_sensor_enabled_{true};
     std::unique_ptr<Si12T> si12t_;
